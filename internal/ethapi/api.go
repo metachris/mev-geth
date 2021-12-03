@@ -2234,6 +2234,7 @@ type CallBundleArgs struct {
 	GasLimit               *uint64               `json:"gasLimit"`
 	Difficulty             *big.Int              `json:"difficulty"`
 	BaseFee                *big.Int              `json:"baseFee"`
+	AddressesOfInterest    []string              `json:"addressesOfInterest"`
 }
 
 // CallBundle will simulate a bundle of transactions at the top of a given block
@@ -2294,6 +2295,18 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs) (map[st
 	} else if s.b.ChainConfig().IsLondon(big.NewInt(args.BlockNumber.Int64())) {
 		baseFee = misc.CalcBaseFee(s.b.ChainConfig(), parent)
 	}
+
+	addressBalanceBeforeTx := make(map[common.Address]*big.Int)
+	addressBalanceDiff := make(map[common.Address]*big.Int)
+	for _, addressOfInterest := range args.AddressesOfInterest {
+		if len(addressOfInterest) != 42 {
+			return nil, errors.New("invalid address of interest: " + addressOfInterest)
+		}
+
+		addressBalanceBeforeTx[common.HexToAddress(addressOfInterest)] = big.NewInt(0)
+		addressBalanceDiff[common.HexToAddress(addressOfInterest)] = big.NewInt(0)
+	}
+
 	header := &types.Header{
 		ParentHash: parent.Hash(),
 		Number:     blockNumber,
@@ -2324,6 +2337,9 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs) (map[st
 
 	results := []map[string]interface{}{}
 	coinbaseBalanceBefore := state.GetBalance(coinbase)
+	for address := range addressBalanceBeforeTx {
+		addressBalanceBeforeTx[address] = state.GetBalance(address)
+	}
 
 	bundleHash := sha3.NewLegacyKeccak256()
 	signer := types.MakeSigner(s.b.ChainConfig(), blockNumber)
@@ -2392,6 +2408,17 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs) (map[st
 	ret["stateBlockNumber"] = parent.Number.Int64()
 
 	ret["bundleHash"] = "0x" + common.Bytes2Hex(bundleHash.Sum(nil))
+
+	if len(args.AddressesOfInterest) > 0 {
+		addressBalanceDiffResponse := make(map[string]string)
+		for address := range addressBalanceDiff {
+			balanceBefore := addressBalanceBeforeTx[address]
+			addressBalanceDiff[address] = new(big.Int).Sub(state.GetBalance(address), balanceBefore)
+			addressBalanceDiffResponse[address.String()] = addressBalanceDiff[address].String()
+		}
+		ret["addressBalanceDiff"] = addressBalanceDiffResponse
+	}
+
 	return ret, nil
 }
 
